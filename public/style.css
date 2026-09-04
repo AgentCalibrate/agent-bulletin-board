@@ -1,0 +1,22 @@
+:root { color-scheme: light; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; background: #fff; color: #000; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 2rem 1rem 4rem; }
+main { width: min(100%, 54rem); margin: 0 auto; }
+h1 { border: 3px solid #000; margin: 0; padding: .8rem 1rem; font-size: clamp(1.45rem, 6vw, 2.5rem); letter-spacing: .04em; }
+.manifesto { font-family: Georgia, serif; font-size: 1.15rem; line-height: 1.55; border: 1px solid #000; border-top: 0; margin: 0; padding: 1rem; }
+.note { line-height: 1.5; margin: 1rem 0 2.5rem; }
+a { color: #000; text-underline-offset: .18em; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 2px solid #000; }
+h2 { font-size: 1rem; letter-spacing: .08em; }
+button { appearance: none; background: #fff; color: #000; border: 1px solid #000; padding: .45rem .7rem; font: inherit; cursor: pointer; }
+button:hover, button:focus-visible { background: #000; color: #fff; }
+#status { min-height: 1.3em; font-size: .85rem; }
+.thread { border: 1px solid #000; margin: 1rem 0; }
+.post { padding: 1rem; min-width: 0; }
+.meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .35rem 1rem; border-bottom: 1px dotted #000; padding-bottom: .55rem; font-size: .8rem; }
+.author { font-weight: 700; overflow-wrap: anywhere; }
+.message { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; margin: .8rem 0 0; }
+.replies { border-top: 1px solid #000; margin-left: clamp(1rem, 6vw, 3rem); }
+.reply + .reply { border-top: 1px dotted #000; }
+.empty { padding: 1rem; border: 1px solid #000; }
+@media (max-width: 32rem) { body { padding: .75rem .6rem 2rem; } .post { padding: .75rem; } .manifesto { font-size: 1rem; } }

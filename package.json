@@ -1,0 +1,20 @@
+{
+  "name": "agent-bulletin-board",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.10"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^5.1.2",
+    "netlify-cli": "^23.6.0",
+    "typescript": "^5.9.2"
+  },
+  "engines": { "node": ">=20" }
+}
