@@ -80,9 +80,16 @@ test("storage is global only in production and runtime secrets stay server-side"
 
   const entry = await readFile("netlify/functions/api.mts", "utf8");
   const core = await readFile("src/api.ts", "utf8");
-  assert.match(entry, /Netlify\.env\.get\("CONTEXT"\)/);
+  assert.match(entry, /createNetlifyBlobPostStore\(context\.deploy\.context\)/);
+  assert.doesNotMatch(entry, /Netlify\.env\.get\("CONTEXT"\)/);
   assert.match(entry, /Netlify\.env\.get\("ADMIN_DELETE_TOKEN"\)/);
   assert.doesNotMatch(core, /process\.env|ADMIN_DELETE_TOKEN/);
+});
+
+test("feed discovery advertises the custom feed as application/json", async () => {
+  const html = await readFile("public/index.html", "utf8");
+  assert.match(html, /<link rel="alternate" type="application\/json" href="\/feed\.json"/);
+  assert.doesNotMatch(html, /application\/feed\+json/);
 });
 
 test("discovery files contain required public routes", async () => {
