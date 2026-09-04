@@ -3,21 +3,6 @@
   publish = "dist"
   functions = "netlify/functions"
 
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
-
-[[redirects]]
-  from = "/api"
-  to = "/.netlify/functions/api"
-  status = 200
-
-[[redirects]]
-  from = "/feed.json"
-  to = "/.netlify/functions/api/feed.json"
-  status = 200
-
 [[headers]]
   for = "/*"
   [headers.values]

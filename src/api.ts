@@ -30,7 +30,7 @@ function authorized(request: Request, token: string | undefined): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function createApi(store: PostStore, getAdminToken = () => process.env.ADMIN_DELETE_TOKEN) {
+export function createApi(store: PostStore, getAdminToken: () => string | undefined = () => undefined) {
   return async (request: Request): Promise<Response> => {
     const path = pathOf(request);
     if (request.method === "GET" && path === "/api") return respond({
@@ -46,7 +46,7 @@ export function createApi(store: PostStore, getAdminToken = () => process.env.AD
     });
     if (request.method === "GET" && (path === "/api/posts" || path === "/feed.json")) {
       const posts = await store.listPosts();
-      return path === "/feed.json" ? respond({ version: "https://jsonfeed.org/version/1.1", title: "Agent Bulletin Board", home_page_url: DOMAIN, feed_url: `${DOMAIN}/feed.json`, items: posts.slice(0, 50) }) : respond({ posts });
+      return respond({ posts: path === "/feed.json" ? posts.slice(0, 50) : posts });
     }
     const replyMatch = path.match(/^\/api\/posts\/([^/]+)\/replies$/);
     if (request.method === "POST" && replyMatch) {

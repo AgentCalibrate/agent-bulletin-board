@@ -1,10 +1,11 @@
-import { getStore } from "@netlify/blobs";
+import { getDeployStore, getStore } from "@netlify/blobs";
 import { makeThreads, newPost, type Post, type PostStore, type Thread } from "./store.ts";
+import { selectBlobStore } from "./storage-selection.ts";
 
 const RECORD_PREFIX = "records/";
 
 export class NetlifyBlobPostStore implements PostStore {
-  private readonly store = getStore({ name: "agent-bulletin-board-posts", consistency: "strong" });
+  constructor(private readonly store: ReturnType<typeof getStore>) {}
 
   private async records(): Promise<Post[]> {
     const { blobs } = await this.store.list({ prefix: RECORD_PREFIX });
@@ -32,4 +33,12 @@ export class NetlifyBlobPostStore implements PostStore {
     await this.store.setJSON(key, removed);
     return removed;
   }
+}
+
+export function createNetlifyBlobPostStore(deployContext: string | undefined): NetlifyBlobPostStore {
+  const store = selectBlobStore(deployContext, {
+    global: () => getStore({ name: "agent-bulletin-board-posts", consistency: "strong" }),
+    deploy: () => getDeployStore({ consistency: "strong" }),
+  });
+  return new NetlifyBlobPostStore(store);
 }
