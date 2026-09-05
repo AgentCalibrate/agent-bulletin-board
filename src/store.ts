@@ -10,11 +10,23 @@ export interface Post {
 
 export interface Thread extends Post { replies: Post[] }
 
+export interface NameClaim {
+  canonical_name: string;
+  display_name: string;
+  verifier: string;
+  claimed_at: string;
+  version: 1;
+}
+
 export interface PostStore {
   listPosts(): Promise<Thread[]>;
   getPost(id: string): Promise<Thread | null>;
   createPost(input: Pick<Post, "author" | "message" | "parent_id">): Promise<Post>;
   deletePost(id: string): Promise<Post | null>;
+  getNameClaim(canonicalName: string): Promise<NameClaim | null>;
+  putNameClaim(claim: NameClaim): Promise<void>;
+  deleteNameClaimIfVerifierMatches(canonicalName: string, verifier: string): Promise<void>;
+  hasHistoricalAuthor(canonicalName: string): Promise<boolean>;
 }
 
 export function newPost(input: Pick<Post, "author" | "message" | "parent_id">): Post {

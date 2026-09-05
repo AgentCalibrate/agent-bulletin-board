@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createApi } from "../src/api.ts";
-import { makeThreads, newPost, type Post, type PostStore } from "../src/store.ts";
+import { canonicalizeName, nameCodeVerifier } from "../src/name-claims.ts";
+import { makeThreads, newPost, type NameClaim, type Post, type PostStore } from "../src/store.ts";
 import { selectBlobStore } from "../src/storage-selection.ts";
 
 class MemoryStore implements PostStore {
   records: Post[] = [];
+  claims = new Map<string, NameClaim>();
   async listPosts() { return makeThreads(this.records); }
   async getPost(id: string) { return (await this.listPosts()).find((post) => post.id === id) ?? null; }
   async createPost(input: Pick<Post, "author" | "message" | "parent_id">) { const post = newPost(input); this.records.push(post); return post; }
   async deletePost(id: string) { const post = this.records.find((item) => item.id === id); if (!post) return null; post.author = "[removed]"; post.message = "[removed]"; return post; }
+  async getNameClaim(name: string) { return this.claims.get(name) ?? null; }
+  async putNameClaim(claim: NameClaim) { this.claims.set(claim.canonical_name, structuredClone(claim)); }
+  async deleteNameClaimIfVerifierMatches(name: string, verifier: string) { if (this.claims.get(name)?.verifier === verifier) this.claims.delete(name); }
+  async hasHistoricalAuthor(name: string) { return this.records.some((post) => post.author !== "[removed]" && canonicalizeName(post.author) === name); }
 }
 const request = (path: string, init?: RequestInit) => new Request(`http://localhost${path}`, init);
 
@@ -45,6 +51,94 @@ test("rejects malformed and invalid content", async () => {
   assert.equal((await api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: "{" }))).status, 400);
   assert.equal((await api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: " ", message: "x" }) }))).status, 400);
   assert.equal((await api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "a", message: "x".repeat(2001) }) }))).status, 400);
+  assert.equal((await api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "a", message: "x", name_code: 4 }) }))).status, 400);
+  assert.equal((await api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "a\u200b", message: "x" }) }))).status, 400);
+});
+
+test("claims names once and requires the code for canonical variants and replies", async () => {
+  const store = new MemoryStore(); const api = createApi(store);
+  const post = (author: string, message: string, name_code?: string) => api(request("/api/posts", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author, message, ...(name_code === undefined ? {} : { name_code }) }),
+  }));
+  const first = await post("Nova-7", "Hello");
+  assert.equal(first.status, 201);
+  const firstBody = await first.json() as { post: Post; name_claim: { name_code: string; warning: string } };
+  const code = firstBody.name_claim.name_code;
+  assert.match(code, /^nc_[A-Za-z0-9_-]{43}$/); // 43 base64url characters encode 256 random bits.
+  assert.equal(store.records[0].author, "Nova-7");
+  assert.equal("name_code" in store.records[0], false);
+
+  const missing = await post("nova-7", "missing");
+  assert.equal(missing.status, 409); assert.equal((await missing.json() as any).error.code, "NAME_CLAIM_REQUIRED");
+  const wrong = await post("  NOVA-7  ", "wrong", "not-the-code");
+  assert.equal(wrong.status, 403); assert.equal((await wrong.json() as any).error.code, "INVALID_NAME_CODE");
+  const followUp = await post("  NOVA-7  ", "back", code);
+  assert.equal(followUp.status, 201);
+  const followUpBody = await followUp.json() as { post: Post };
+  assert.equal(followUpBody.post.author, "Nova-7"); assert.equal("name_claim" in followUpBody, false);
+  assert.doesNotMatch(JSON.stringify(followUpBody), new RegExp(code));
+
+  const replyUrl = `/api/posts/${firstBody.post.id}/replies`;
+  const reply = (name_code?: string) => api(request(replyUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "nova-7", message: "reply", ...(name_code === undefined ? {} : { name_code }) }) }));
+  assert.equal((await reply()).status, 409);
+  assert.equal((await reply("wrong")).status, 403);
+  assert.equal((await reply(code)).status, 201);
+
+  const second = await post("Orbit", "independent"); assert.equal(second.status, 201);
+  assert.notEqual((await second.json() as any).name_claim.name_code, code);
+  const supplied = await post("Unused", "no user codes", "chosen");
+  assert.equal(supplied.status, 400); assert.equal((await supplied.json() as any).error.code, "NAME_CODE_NOT_EXPECTED");
+
+  const claim = store.claims.get("nova-7")!;
+  assert.equal(claim.verifier, nameCodeVerifier(code));
+  assert.equal(JSON.stringify(claim).includes(code), false);
+  for (const path of ["/api/posts", `/api/posts/${firstBody.post.id}`, "/feed.json"]) {
+    const body = await (await api(request(path))).text();
+    assert.doesNotMatch(body, new RegExp(code)); assert.doesNotMatch(body, /name_code/);
+  }
+});
+
+test("reserves historical names but ignores tombstones", async () => {
+  const store = new MemoryStore();
+  store.records.push(newPost({ author: "  Aster-01 ", message: "legacy", parent_id: null }));
+  store.records.push(newPost({ author: "[removed]", message: "[removed]", parent_id: null }));
+  const api = createApi(store);
+  const send = (author: string) => api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author, message: "test" }) }));
+  const legacy = await send("ASTER-01");
+  assert.equal(legacy.status, 409); assert.equal((await legacy.json() as any).error.code, "LEGACY_NAME_RESERVED");
+  const tombstone = await send("[removed]");
+  assert.equal(tombstone.status, 400); assert.equal((await tombstone.json() as any).error.code, "INVALID_AUTHOR");
+  assert.equal(store.claims.has("[removed]"), false);
+});
+
+test("two concurrent first claims use read-back verification so the loser creates no post", async () => {
+  class RacingStore extends MemoryStore {
+    reads = 0;
+    releaseFirstRead!: () => void;
+    firstRead = new Promise<void>((resolve) => { this.releaseFirstRead = resolve; });
+    override async getNameClaim(name: string) {
+      this.reads++;
+      if (this.reads <= 2) return null; // Both requests observe the initially unused name.
+      if (this.reads === 3) { await this.firstRead; return super.getNameClaim(name); }
+      const winner = await super.getNameClaim(name);
+      this.releaseFirstRead();
+      return winner;
+    }
+  }
+  const store = new RacingStore(); const api = createApi(store);
+  const send = (message: string) => api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "Racer", message }) }));
+  const responses = await Promise.all([send("first attempt"), send("second attempt")]);
+  assert.deepEqual(responses.map(({ status }) => status).sort(), [201, 409]);
+  const loser = responses.find(({ status }) => status === 409)!;
+  assert.equal((await loser.json() as any).error.code, "NAME_ALREADY_CLAIMED");
+  assert.equal(store.records.length, 1);
+});
+
+test("post failure cleans up only the newly written matching claim", async () => {
+  class FailingStore extends MemoryStore { override async createPost(): Promise<Post> { throw new Error("write failed"); } }
+  const store = new FailingStore(); const api = createApi(store);
+  await assert.rejects(api(request("/api/posts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author: "Temporary", message: "fail" }) })), /write failed/);
+  assert.equal(store.claims.size, 0);
 });
 
 test("homepage clearly explains API participation without posting controls", async () => {
@@ -101,5 +195,7 @@ test("discovery files contain required public routes", async () => {
   assert.match(llms, new RegExp(`POST ${domain}/api/posts\\nContent-Type: application/json`));
   assert.match(llms, new RegExp(`POST ${domain}/api/posts/POST_ID/replies\\nContent-Type: application/json`));
   assert.equal((llms.match(/curl -X POST/g) ?? []).length, 2);
-  assert.match(llms, /"author": "your-name"/); assert.match(llms, /"message": "your reply"/);
+  for (const guidance of ["omit name_code", "one-time name_code", "SAVE IT", "every later post or reply", "cannot be recovered", "Humans and autonomous agents use the same"])
+    assert.match(llms, new RegExp(guidance, "i"));
+  assert.match(llms, /"author": "Nova-7"/); assert.match(llms, /"message": "Reply"/); assert.match(llms, /"name_code": "YOUR_NAME_CODE"/);
 });
