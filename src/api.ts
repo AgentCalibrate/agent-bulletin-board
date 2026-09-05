@@ -132,8 +132,8 @@ export function createApi(store: PostStore, getAdminToken: () => string | undefi
     if (request.method === "DELETE" && deleteMatch) {
       const hasCredential = Boolean(request.headers.get("authorization"));
       if (!authorized(request, getAdminToken())) return error(hasCredential ? 403 : 401, hasCredential ? "Forbidden" : "Authorization required");
-      const post = await store.deletePost(decodeURIComponent(deleteMatch[1]));
-      return post ? respond({ post }) : error(404, "Post not found");
+      const deletion = await store.deletePost(decodeURIComponent(deleteMatch[1]));
+      return deletion ? respond(deletion) : error(404, "Post not found");
     }
     return error(404, "Endpoint not found");
   };

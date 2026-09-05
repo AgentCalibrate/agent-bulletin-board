@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createApi } from "../src/api.ts";
 import { canonicalizeName, nameCodeVerifier } from "../src/name-claims.ts";
-import { makeThreads, newPost, type NameClaim, type Post, type PostStore } from "../src/store.ts";
+import { makeThreads, newPost, type DeleteResult, type NameClaim, type Post, type PostStore } from "../src/store.ts";
 import { selectBlobStore } from "../src/storage-selection.ts";
 
 class MemoryStore implements PostStore {
@@ -12,7 +12,13 @@ class MemoryStore implements PostStore {
   async listPosts() { return makeThreads(this.records); }
   async getPost(id: string) { return (await this.listPosts()).find((post) => post.id === id) ?? null; }
   async createPost(input: Pick<Post, "author" | "message" | "parent_id">) { const post = newPost(input); this.records.push(post); return post; }
-  async deletePost(id: string) { const post = this.records.find((item) => item.id === id); if (!post) return null; post.author = "[removed]"; post.message = "[removed]"; return post; }
+  async deletePost(id: string): Promise<DeleteResult | null> {
+    const post = this.records.find((item) => item.id === id);
+    if (!post) return null;
+    const ids = new Set(post.parent_id === null ? [id, ...this.records.filter((item) => item.parent_id === id).map((item) => item.id)] : [id]);
+    this.records = this.records.filter((item) => !ids.has(item.id));
+    return { deleted_id: id, deleted_count: ids.size, deleted_type: post.parent_id === null ? "thread" : "reply" };
+  }
   async getNameClaim(name: string) { return this.claims.get(name) ?? null; }
   async putNameClaim(claim: NameClaim) { this.claims.set(claim.canonical_name, structuredClone(claim)); }
   async deleteNameClaimIfVerifierMatches(name: string, verifier: string) { if (this.claims.get(name)?.verifier === verifier) this.claims.delete(name); }
@@ -41,9 +47,44 @@ test("documents API and performs the complete persistent thread lifecycle", asyn
   assert.deepEqual(Object.keys(feedBody), ["posts"]); assert.equal(feedBody.posts.length, 1);
   assert.equal((await api(request(`/api/admin/posts/${root.id}`, { method: "DELETE" }))).status, 401);
   assert.equal((await api(request(`/api/admin/posts/${root.id}`, { method: "DELETE", headers: { authorization: "Bearer wrong" } }))).status, 403);
-  assert.equal((await api(request(`/api/admin/posts/${root.id}`, { method: "DELETE", headers: { authorization: "Bearer local-test-token" } }))).status, 200);
-  const deleted = await (await api(request(`/api/posts/${root.id}`))).json() as { post: Post & { replies: Post[] } };
-  assert.equal(deleted.post.message, "[removed]"); assert.equal(deleted.post.replies.length, 1);
+  const deletion = await api(request(`/api/admin/posts/${root.id}`, { method: "DELETE", headers: { authorization: "Bearer local-test-token" } }));
+  assert.equal(deletion.status, 200);
+  assert.deepEqual(await deletion.json(), { deleted_id: root.id, deleted_count: 2, deleted_type: "thread" });
+  assert.equal((await api(request(`/api/posts/${root.id}`))).status, 404);
+  assert.deepEqual(await (await api(request("/api/posts"))).json(), { posts: [] });
+  assert.deepEqual(await (await api(request("/feed.json"))).json(), { posts: [] });
+  assert.equal(store.records.length, 0);
+});
+
+test("admin deletion physically removes replies while preserving claims and reusable name codes", async () => {
+  const store = new MemoryStore(); const api = createApi(store, () => "secret");
+  const post = (path: string, author: string, message: string, name_code?: string) => api(request(path, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ author, message, ...(name_code ? { name_code } : {}) }),
+  }));
+  const rootResponse = await post("/api/posts", "Root Author", "root");
+  const rootBody = await rootResponse.json() as { post: Post; name_claim: { name_code: string } };
+  const replyResponse = await post(`/api/posts/${rootBody.post.id}/replies`, "Reply Author", "reply");
+  const replyBody = await replyResponse.json() as { post: Post; name_claim: { name_code: string } };
+  const claimBefore = structuredClone(store.claims.get("reply author"));
+
+  assert.equal((await api(request(`/api/admin/posts/${replyBody.post.id}`, { method: "DELETE" }))).status, 401);
+  assert.equal((await api(request(`/api/admin/posts/${replyBody.post.id}`, { method: "DELETE", headers: { authorization: "Bearer nope" } }))).status, 403);
+  const deletion = await api(request(`/api/admin/posts/${replyBody.post.id}`, { method: "DELETE", headers: { authorization: "Bearer secret" } }));
+  assert.equal(deletion.status, 200);
+  assert.deepEqual(await deletion.json(), { deleted_id: replyBody.post.id, deleted_count: 1, deleted_type: "reply" });
+  assert.equal(store.records.some(({ id }) => id === replyBody.post.id), false);
+  assert.deepEqual(store.claims.get("reply author"), claimBefore);
+
+  for (const path of ["/api/posts", `/api/posts/${rootBody.post.id}`, "/feed.json"]) {
+    const body = await (await api(request(path))).text();
+    assert.doesNotMatch(body, new RegExp(replyBody.post.id));
+    assert.doesNotMatch(body, /\[removed\]/);
+  }
+  assert.equal((await api(request(`/api/posts/${replyBody.post.id}`))).status, 404);
+  const postedAgain = await post("/api/posts", "REPLY AUTHOR", "still mine", replyBody.name_claim.name_code);
+  assert.equal(postedAgain.status, 201);
+  assert.equal(((await postedAgain.json()) as { post: Post }).post.author, "Reply Author");
+  assert.deepEqual(store.claims.get("reply author"), claimBefore);
 });
 
 test("rejects malformed and invalid content", async () => {

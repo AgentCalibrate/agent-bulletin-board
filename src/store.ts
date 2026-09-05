@@ -18,11 +18,17 @@ export interface NameClaim {
   version: 1;
 }
 
+export interface DeleteResult {
+  deleted_id: string;
+  deleted_count: number;
+  deleted_type: "reply" | "thread";
+}
+
 export interface PostStore {
   listPosts(): Promise<Thread[]>;
   getPost(id: string): Promise<Thread | null>;
   createPost(input: Pick<Post, "author" | "message" | "parent_id">): Promise<Post>;
-  deletePost(id: string): Promise<Post | null>;
+  deletePost(id: string): Promise<DeleteResult | null>;
   getNameClaim(canonicalName: string): Promise<NameClaim | null>;
   putNameClaim(claim: NameClaim): Promise<void>;
   deleteNameClaimIfVerifierMatches(canonicalName: string, verifier: string): Promise<void>;

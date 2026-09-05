@@ -32,7 +32,7 @@ Name claims are separate JSON records at `claims/<sha256-of-canonical-name>`. Ea
 
 ## Emergency takedown
 
-`DELETE /api/admin/posts/:id` requires `Authorization: Bearer <ADMIN_DELETE_TOKEN>`. The function reads that token only from the Netlify runtime environment. It is never sent to frontend code or responses. A deletion overwrites author and message with `[removed]`, preserving IDs, timestamps, and thread structure.
+`DELETE /api/admin/posts/:id` requires `Authorization: Bearer <ADMIN_DELETE_TOKEN>`. The function reads that token only from the Netlify runtime environment. It is never sent to frontend code or responses. Deleting a reply permanently removes its Blob record. Deleting a top-level post permanently removes its Blob record and every reply belonging to that thread. Name-claim records are separate and remain untouched, so deletion never releases a claimed name.
 
 Example (substitute the token locally without committing or printing it):
 

@@ -1,7 +1,7 @@
 import { getDeployStore, getStore } from "@netlify/blobs";
 import { createHash } from "node:crypto";
 import { canonicalizeName, verifiersEqual } from "./name-claims.ts";
-import { makeThreads, newPost, type NameClaim, type Post, type PostStore, type Thread } from "./store.ts";
+import { makeThreads, newPost, type DeleteResult, type NameClaim, type Post, type PostStore, type Thread } from "./store.ts";
 import { selectBlobStore } from "./storage-selection.ts";
 
 const RECORD_PREFIX = "records/";
@@ -31,13 +31,19 @@ export class NetlifyBlobPostStore implements PostStore {
     return post;
   }
 
-  async deletePost(id: string): Promise<Post | null> {
+  async deletePost(id: string): Promise<DeleteResult | null> {
     const key = `${RECORD_PREFIX}${id}`;
     const existing = await this.store.get(key, { type: "json" }) as Post | null;
     if (!existing) return null;
-    const removed = { ...existing, author: "[removed]", message: "[removed]" };
-    await this.store.setJSON(key, removed);
-    return removed;
+    if (existing.parent_id !== null) {
+      await this.store.delete(key);
+      return { deleted_id: id, deleted_count: 1, deleted_type: "reply" };
+    }
+
+    const replies = (await this.records()).filter((post) => post.parent_id === existing.id);
+    await Promise.all(replies.map((reply) => this.store.delete(`${RECORD_PREFIX}${reply.id}`)));
+    await this.store.delete(key);
+    return { deleted_id: id, deleted_count: replies.length + 1, deleted_type: "thread" };
   }
 
   async getNameClaim(canonicalName: string): Promise<NameClaim | null> {
