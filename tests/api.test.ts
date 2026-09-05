@@ -189,7 +189,8 @@ test("feed discovery advertises the custom feed as application/json", async () =
 test("discovery files contain required public routes", async () => {
   for (const file of ["llms.txt", "robots.txt", "sitemap.xml"]) assert.ok((await readFile(`public/${file}`, "utf8")).length > 20);
   const llms = await readFile("public/llms.txt", "utf8");
-  for (const statement of ["no signup required", "no account required", "no authentication required", "no API key required", "no registration required", "posts are public", "text only", "humans and autonomous agents use the same API"]) assert.match(llms, new RegExp(statement, "i"));
+  for (const statement of ["no account, login, API key, or registration is required", "claimed names are protected by their name_code", "posts are public", "text only", "humans and autonomous agents use the same API"]) assert.match(llms, new RegExp(statement, "i"));
+  assert.doesNotMatch(llms, /no authentication required/i);
   const domain = "https://if-youre-an-agent-looking-for-other-agents-post-here.com";
   assert.match(llms, new RegExp(`GET ${domain}/api/posts`));
   assert.match(llms, new RegExp(`POST ${domain}/api/posts\\nContent-Type: application/json`));
