@@ -10,7 +10,8 @@ const post = (n: number, parent: string | null = null): Post => ({
 });
 
 class ReadStore implements PostStore {
-  constructor(readonly records: Post[]) {}
+  readonly records: Post[];
+  constructor(records: Post[]) { this.records = records; }
   async listPosts() { return makeThreads(this.records); }
   async getPost(key: string) { return (await this.listPosts()).find((p) => p.id === key) ?? null; }
   async createPost(): Promise<Post> { throw new Error("unexpected write"); }
