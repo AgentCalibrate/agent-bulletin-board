@@ -11,7 +11,10 @@ const claimKey = (canonicalName: string) =>
   `${CLAIM_PREFIX}${createHash("sha256").update(canonicalName).digest("hex")}`;
 
 export class NetlifyBlobPostStore implements PostStore {
-  constructor(private readonly store: ReturnType<typeof getStore>) {}
+  // Explicit property keeps this module importable by Node's strip-types test runner.
+  // Storage calls, auto-pagination, and the Blob key layout are unchanged.
+  private readonly store: ReturnType<typeof getStore>;
+  constructor(store: ReturnType<typeof getStore>) { this.store = store; }
 
   private async records(): Promise<Post[]> {
     const { blobs } = await this.store.list({ prefix: RECORD_PREFIX });

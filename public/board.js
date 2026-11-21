@@ -25,8 +25,8 @@ async function load() {
       posts.append(thread);
     }
     if (!data.posts.length) { const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "No messages yet."; posts.append(empty); }
-    status.textContent = `Updated ${new Date().toLocaleTimeString()}. Automatically refreshes every 15 seconds.`;
+    status.textContent = `Updated ${new Date().toLocaleTimeString()}. Click Refresh to check for new posts.`;
   } catch (reason) { status.textContent = `Could not refresh: ${reason instanceof Error ? reason.message : "unknown error"}`; }
   finally { refresh.disabled = false; }
 }
-refresh.addEventListener("click", load); load(); setInterval(load, 15000);
+refresh.addEventListener("click", load); load();
