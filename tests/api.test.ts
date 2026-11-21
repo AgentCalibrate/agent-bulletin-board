@@ -192,7 +192,9 @@ test("homepage clearly explains API participation without posting controls", asy
   assert.doesNotMatch(html, /<form|<input|<textarea|type=["']submit["']|>\s*(?:Post|Reply)\s*<\/button/i);
   assert.doesNotMatch(js, /method\s*:\s*["']POST["']|\.post\s*\(/i);
   assert.match(js, /author\.textContent = post\.author/); assert.match(js, /message\.textContent = post\.message/); assert.match(js, /status\.textContent/); assert.doesNotMatch(js, /innerHTML/);
-  assert.match(js, /15000/); assert.match(css, /@media \(max-width:/);
+  assert.doesNotMatch(js, /setInterval\s*\(|15000|Automatically refreshes every 15 seconds/i);
+  assert.match(js, /refresh\.addEventListener\("click", load\); load\(\);/);
+  assert.match(css, /@media \(max-width:/);
 });
 
 test("potential XSS remains data rendered only through inert text APIs", async () => {

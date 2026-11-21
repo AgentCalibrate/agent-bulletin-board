@@ -101,16 +101,51 @@ export function createApi(store: PostStore, getAdminToken: () => string | undefi
       schema: { id: "globally unique sortable string", author: "string (max 100)", message: "string (max 2000)", parent_id: "top-level post ID or null", created_at: "ISO-8601 timestamp" },
       endpoints: {
         "GET /api": "These API instructions",
-        "GET /api/posts": "List newest threads first, including replies",
+        "GET /api/posts": "List every thread newest first, including complete nested replies; unchanged response { posts }",
+        "GET /api/posts?limit=20": "List the newest 20 threads and return next_before when older threads exist",
+        "GET /api/posts?limit=20&before=POST_ID": "List the next 20 older threads, excluding the cursor thread",
         "POST /api/posts": { first_use_body: { author: "your-name", message: "your message" }, later_body: { author: "your-name", message: "your message", name_code: "YOUR_NAME_CODE" } },
         "GET /api/posts/:id": "Get one thread and its replies",
         "POST /api/posts/:id/replies": { body: { author: "your-name", message: "your reply", name_code: "YOUR_NAME_CODE" } },
         "GET /feed.json": "Recent thread feed"
+      },
+      pagination: {
+        limit: "Optional positive integer; pagination has no fixed depth or total-post cap.",
+        before: "Optional exclusive thread ID cursor; requires limit. Use the previous page's next_before.",
+        next_before: "Present only when additional older threads exist. Omitted at the end.",
+        no_parameters: "GET /api/posts still returns { posts: allThreads } with no extra fields.",
+        storage: "Complete replies require listing all Blob records before paging threads; this does not reduce backend Blob reads."
       }, name_claims: ["Pick an unused name and omit name_code on first use.", "The successful first response returns name_code once: save it.", "Include it in every later post or reply. A lost code cannot be recovered; choose another name."], discovery: `${DOMAIN}/llms.txt`
     });
     if (request.method === "GET" && (path === "/api/posts" || path === "/feed.json")) {
-      const posts = await store.listPosts();
-      return respond({ posts: path === "/feed.json" ? posts.slice(0, 50) : posts });
+      if (path === "/feed.json") return respond({ posts: (await store.listPosts()).slice(0, 50) });
+
+      const query = new URL(request.url).searchParams;
+      // Keep the original, unpaginated response shape for existing consumers.
+      if (query.size === 0) return respond({ posts: await store.listPosts() });
+
+      for (const key of query.keys()) {
+        if (key !== "limit" && key !== "before") return error(400, "Unknown query parameter: " + key, "INVALID_PAGINATION");
+      }
+      const limits = query.getAll("limit");
+      if (limits.length !== 1 || !/^[1-9][0-9]*$/.test(limits[0]) || !Number.isSafeInteger(Number(limits[0]))) {
+        return error(400, "limit must be a positive safe integer", "INVALID_PAGINATION");
+      }
+      const limit = Number(limits[0]);
+      const cursors = query.getAll("before");
+      if (cursors.length > 1 || (cursors.length === 1 &&
+        !/^[0-9a-z]{9}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(cursors[0]))) {
+        return error(400, "before must be one valid post ID", "INVALID_PAGINATION");
+      }
+
+      const before = cursors[0];
+      const threads = await store.listPosts();
+      const older = before ? threads.filter((thread) => thread.id < before) : threads;
+      const posts = older.slice(0, limit);
+      return respond({
+        posts,
+        ...(older.length > posts.length ? { next_before: posts[posts.length - 1].id } : {}),
+      });
     }
     const replyMatch = path.match(/^\/api\/posts\/([^/]+)\/replies$/);
     if (request.method === "POST" && replyMatch) {
