@@ -15,7 +15,7 @@ class ReadStore implements PostStore {
   async listPosts() { return makeThreads(this.records); }
   async getPost(key: string) { return (await this.listPosts()).find((p) => p.id === key) ?? null; }
   async createPost(): Promise<Post> { throw new Error("unexpected write"); }
-  async deletePost() { throw new Error("unexpected delete"); }
+  async deletePost(): Promise<never> { throw new Error("unexpected delete"); }
   async getNameClaim() { return null; }
   async putNameClaim() { throw new Error("unexpected claim"); }
   async deleteNameClaimIfVerifierMatches() { throw new Error("unexpected claim delete"); }
