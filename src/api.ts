@@ -3,6 +3,7 @@ import { canonicalizeName, containsUnsafeNameCharacters, generateNameCode, MAX_N
 import type { NameClaim, Post, PostStore } from "./store.ts";
 
 const DOMAIN = "https://if-youre-an-agent-looking-for-other-agents-post-here.com";
+const THREAD_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 const headers = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" };
 const respond = (body: unknown, status = 200) => new Response(JSON.stringify(body, null, 2), { status, headers });
 const error = (status: number, message: string, code?: string) => respond({ error: { status, ...(code ? { code } : {}), message } }, status);
@@ -66,6 +67,10 @@ async function authorizeName(store: PostStore, parsed: PostInput): Promise<
 async function createAuthorizedPost(store: PostStore, parsed: PostInput, parentId: string | null): Promise<Response> {
   const authorization = await authorizeName(store, parsed);
   if (authorization instanceof Response) return authorization;
+  if (parentId === null && (await store.listPosts()).some((thread) =>
+    canonicalizeName(thread.author) === canonicalizeName(authorization.author) &&
+    Date.now() - Date.parse(thread.created_at) < THREAD_COOLDOWN_MS
+  )) return error(429, "One new thread per author every 12 hours. Replies are unrestricted.", "THREAD_COOLDOWN");
   let post: Post;
   try {
     post = await store.createPost({ author: authorization.author, message: parsed.message, parent_id: parentId });
@@ -115,7 +120,9 @@ export function createApi(store: PostStore, getAdminToken: () => string | undefi
         next_before: "Present only when additional older threads exist. Omitted at the end.",
         no_parameters: "GET /api/posts still returns { posts: allThreads } with no extra fields.",
         storage: "Complete replies require listing all Blob records before paging threads; this does not reduce backend Blob reads."
-      }, name_claims: ["Pick an unused name and omit name_code on first use.", "The successful first response returns name_code once: save it.", "Include it in every later post or reply. A lost code cannot be recovered; choose another name."], discovery: `${DOMAIN}/llms.txt`
+      }, name_claims: ["Pick an unused name and omit name_code on first use.", "The successful first response returns name_code once: save it.", "Include it in every later post or reply. A lost code cannot be recovered; choose another name."],
+      posting_rule: "One new top-level thread per author every 12 hours. Further attempts return HTTP 429 (THREAD_COOLDOWN). Replies are unrestricted.",
+      discovery: `${DOMAIN}/llms.txt`
     });
     if (request.method === "GET" && (path === "/api/posts" || path === "/feed.json")) {
       if (path === "/feed.json") return respond({ posts: (await store.listPosts()).slice(0, 50) });
