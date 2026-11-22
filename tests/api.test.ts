@@ -113,6 +113,11 @@ test("claims names once and requires the code for canonical variants and replies
   assert.equal(missing.status, 409); assert.equal((await missing.json() as any).error.code, "NAME_CLAIM_REQUIRED");
   const wrong = await post("  NOVA-7  ", "wrong", "not-the-code");
   assert.equal(wrong.status, 403); assert.equal((await wrong.json() as any).error.code, "INVALID_NAME_CODE");
+  const blocked = await post("  NOVA-7  ", "back too soon", code);
+  assert.equal(blocked.status, 429);
+  assert.equal((await blocked.json() as any).error.code, "THREAD_COOLDOWN");
+  assert.equal(store.records.length, 1);
+  store.records[0].created_at = new Date(Date.now() - 12 * 60 * 60 * 1000 - 1000).toISOString();
   const followUp = await post("  NOVA-7  ", "back", code);
   assert.equal(followUp.status, 201);
   const followUpBody = await followUp.json() as { post: Post };
@@ -137,6 +142,32 @@ test("claims names once and requires the code for canonical variants and replies
     const body = await (await api(request(path))).text();
     assert.doesNotMatch(body, new RegExp(code)); assert.doesNotMatch(body, /name_code/);
   }
+});
+
+test("new thread cooldown is 12 hours per canonical author; replies are unrestricted", async () => {
+  const store = new MemoryStore(); const api = createApi(store);
+  const post = (path: string, author: string, message: string, name_code?: string) => api(request(path, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ author, message, ...(name_code === undefined ? {} : { name_code }) }),
+  }));
+  const first = await post("/api/posts", "Nova-7", "first thread");
+  const { post: root, name_claim } = await first.json() as { post: Post; name_claim: { name_code: string } };
+  assert.equal(first.status, 201);
+
+  const reply = await post(`/api/posts/${root.id}/replies`, " nova-7 ", "reply immediately", name_claim.name_code);
+  assert.equal(reply.status, 201);
+  const anotherAuthor = await post("/api/posts", "Orbit", "independent thread");
+  assert.equal(anotherAuthor.status, 201);
+
+  store.records[0].created_at = new Date(Date.now() - 12 * 60 * 60 * 1000 + 60_000).toISOString();
+  const early = await post("/api/posts", "NOVA-7", "too early", name_claim.name_code);
+  assert.equal(early.status, 429);
+  assert.equal((await early.json() as any).error.code, "THREAD_COOLDOWN");
+  assert.equal(store.records.length, 3);
+
+  store.records[0].created_at = new Date(Date.now() - 12 * 60 * 60 * 1000 - 60_000).toISOString();
+  assert.equal((await post("/api/posts", "NOVA-7", "allowed after 12 hours", name_claim.name_code)).status, 201);
+  assert.equal((await post("/api/posts", "NOVA-7", "immediate third thread", name_claim.name_code)).status, 429);
 });
 
 test("reserves historical names but ignores tombstones", async () => {
@@ -187,7 +218,7 @@ test("homepage clearly explains API participation without posting controls", asy
   const blurb = "A public, text-only message board. Anyone can post and reply without accounts or authentication. There is no algorithm, profiles, likes, moderation queue or social-network machinery. Posts appear immediately. The owner retains only an emergency takedown capability. This functionality will never change. The board will always remain free and open.";
   assert.ok(html.includes(blurb));
   for (const outdated of ["anonymous", "machine-first", "Humans are spectators", "humans can only watch", "read-only human interface", "no human posting UI"]) assert.doesNotMatch(html, new RegExp(outdated, "i"));
-  assert.match(html, /HOW TO POST/); assert.match(html, /GET \/api\/posts/); assert.match(html, /POST \/api\/posts/); assert.match(html, /POST \/api\/posts\/:id\/replies/);
+  assert.match(html, /HOW TO POST/); assert.match(html, /12 hours/); assert.match(html, /GET \/api\/posts/); assert.match(html, /POST \/api\/posts/); assert.match(html, /POST \/api\/posts\/:id\/replies/);
   assert.match(html, /href="\/llms\.txt"/); assert.match(html, /href="\/api"/);
   assert.doesNotMatch(html, /<form|<input|<textarea|type=["']submit["']|>\s*(?:Post|Reply)\s*<\/button/i);
   assert.doesNotMatch(js, /method\s*:\s*["']POST["']|\.post\s*\(/i);
@@ -241,5 +272,6 @@ test("discovery files contain required public routes", async () => {
   assert.equal((llms.match(/curl -X POST/g) ?? []).length, 2);
   for (const guidance of ["omit name_code", "one-time name_code", "SAVE IT", "every later post or reply", "cannot be recovered", "Humans and autonomous agents use the same"])
     assert.match(llms, new RegExp(guidance, "i"));
+  assert.match(llms, /12 hours/); assert.match(llms, /THREAD_COOLDOWN/);
   assert.match(llms, /"author": "Nova-7"/); assert.match(llms, /"message": "Reply"/); assert.match(llms, /"name_code": "YOUR_NAME_CODE"/);
 });
